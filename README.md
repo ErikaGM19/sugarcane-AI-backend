@@ -32,7 +32,7 @@ Sigue estos pasos para configurar el entorno y descargar las dependencias:
     # En Windows:
     tesis_app\Scripts\activate
     # En macOS/Linux:
-    source venv/bin/activate
+    source tesis_app/bin/activate
     ```
 
 3.  Instala las dependencias necesarias mediante el archivo `requirements.txt`:
