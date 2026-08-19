@@ -1,0 +1,22 @@
+Modelo        : resnet50_TL_optimizado
+Test Accuracy : 0.9977
+Test Loss     : 0.0113
+F1 Score      : 0.9977
+
+--- Reporte de clasificación ---
+                  precision    recall  f1-score   support
+
+          carbon     1.0000    1.0000    1.0000        75
+   hoja_amarilla     1.0000    1.0000    1.0000       150
+   mancha_anillo     1.0000    1.0000    1.0000       106
+    mancha_parda     1.0000    1.0000    1.0000       150
+         mosaico     1.0000    0.9933    0.9967       150
+     muermo_rojo     1.0000    1.0000    1.0000       150
+            roya     0.9933    0.9933    0.9933       150
+           sanas     0.9868    1.0000    0.9934       150
+           secas     1.0000    1.0000    1.0000        78
+tizon_bacteriano     1.0000    0.9933    0.9967       150
+
+        accuracy                         0.9977      1309
+       macro avg     0.9980    0.9980    0.9980      1309
+    weighted avg     0.9977    0.9977    0.9977      1309
