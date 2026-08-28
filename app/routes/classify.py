@@ -1,5 +1,6 @@
 from fastapi import APIRouter, UploadFile, File, HTTPException
 from app.services.model import predict
+from app.services.llm import get_disease_info
 
 router = APIRouter()
 
@@ -30,7 +31,11 @@ async def classify_image(file: UploadFile = File(...)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error al procesar la imagen: {str(e)}")
 
+    # Consultar el módulo LLM con la clase detectada
+    disease_info = get_disease_info(result["class"])
+
     return {
         "filename": file.filename,
         "prediction": result,
+        "disease_info": disease_info,
     }
