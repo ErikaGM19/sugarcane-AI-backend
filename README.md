@@ -7,7 +7,6 @@ Este proyecto es el backend para una aplicación de clasificación de enfermedad
 *   **API RESTful:** Desarrollada con FastAPI para un alto rendimiento y fácil integración.
 *   **Modelo de IA:** Integración de un modelo ResNet50 para la clasificación de 10 clases de condiciones en las hojas (incluyendo hojas sanas y diversas enfermedades como Roya, Carbón, Mosaico, etc.).
 *   **Procesamiento de Imágenes:** Las imágenes enviadas a la API son preprocesadas y adaptadas para cumplir con los requerimientos del modelo.
-*   **Modo Simulación:** Si el archivo de pesos del modelo no se encuentra disponible, la API responde con predicciones simuladas para facilitar las pruebas de integración.
 
 ## Requisitos Previos
 
@@ -59,3 +58,17 @@ uvicorn app.main:app --reload --port 8000
 
 Una vez que el servidor esté en marcha, puedes acceder a la **Documentación Interactiva (Swagger UI)** para probar los endpoints en tu navegador:
 `http://localhost:8000/docs`
+
+## Pruebas Unitarias
+
+El proyecto cuenta con un conjunto de pruebas unitarias desarrolladas bajo el patrón **AAA (Arrange, Act, Assert)** para validar los servicios (autenticación, LLM, modelos de Machine Learning) y las rutas de la API.
+
+Para ejecutar la batería de pruebas, asegúrate de tener instaladas las dependencias (incluidas en `requirements.txt`) y de haber generado el cliente Prisma localmente con `prisma generate`.
+
+Luego, ejecuta el siguiente comando en la raíz del proyecto:
+
+```bash
+python -m pytest tests/ -v
+```
+
+El parámetro `-v` proporciona un reporte detallado con todos los casos de prueba ejecutados y su resultado.

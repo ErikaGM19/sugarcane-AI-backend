@@ -135,7 +135,7 @@ def load_model():
         return _model
 
     if not os.path.exists(MODEL_PATH):
-        print("[WARN] Archivo de pesos no encontrado. Modo simulacion activado.")
+        print(f"[ERROR] Archivo de pesos no encontrado en: {MODEL_PATH}")
         return None
 
     try:
@@ -184,21 +184,9 @@ def predict(image_bytes: bytes) -> dict:
     """Recibe bytes de imagen y retorna la predicción del modelo."""
     model = load_model()
 
-    # Modo simulación (sin modelo o error al cargar)
     if model is None:
-        import random
-        idx = random.randint(0, len(CLASS_NAMES) - 1)
-        confidence = round(random.uniform(0.75, 0.99), 4)
-        return {
-            "class": CLASS_NAMES[idx],
-            "confidence": confidence,
-            "all_probabilities": {
-                name: round(random.uniform(0.0, 0.1), 4) for name in CLASS_NAMES
-            },
-            "simulated": True,
-        }
+        raise RuntimeError("El modelo de clasificación no está disponible o no se pudo cargar.")
 
-    # Modo real
     tensor = preprocess_image(image_bytes)
     predictions = model.predict(tensor, verbose=0)
 
@@ -212,5 +200,4 @@ def predict(image_bytes: bytes) -> dict:
             CLASS_NAMES[i]: round(float(prob), 4)
             for i, prob in enumerate(predictions[0])
         },
-        "simulated": False,
     }
