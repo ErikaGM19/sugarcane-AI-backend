@@ -147,6 +147,6 @@ def test_get_disease_info_schema_contract(mock_get_client):
     failure_result = get_disease_info("Hoja Sana")
 
     # Assert
-    expected_keys = {"sintomas", "causas", "recomendaciones", "generated"}
+    expected_keys = {"sintomas", "causas", "recomendaciones", "generated", "recognized"}
     assert set(success_result.keys()) == expected_keys
     assert set(failure_result.keys()) == expected_keys

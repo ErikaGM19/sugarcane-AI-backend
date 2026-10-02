@@ -51,7 +51,8 @@ def test_classify_valid_image(mock_get_disease_info, mock_predict, client):
     assert data["prediction"]["class"] == "Hoja Sana"
     assert data["disease_info"]["generated"] is True
     mock_predict.assert_called_once()
-    mock_get_disease_info.assert_called_once_with("Hoja Sana")
+    mock_get_disease_info.assert_called_once()
+    assert mock_get_disease_info.call_args[0][0] == "Hoja Sana"
 
     app.dependency_overrides.clear()
 
