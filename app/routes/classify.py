@@ -125,18 +125,10 @@ async def classify_image(file: UploadFile = File(...), current_user = Depends(ge
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error al procesar la imagen: {str(e)}")
 
-    # Filtro 1 (Inferencia del Modelo de Visión): Si la confianza es muy baja (< 0.90),
-    # no se trata como una enfermedad válida y evitamos consultar a Gemini innecesariamente.
-    if result["confidence"] < CONFIDENCE_THRESHOLD:
-        return {
-            "filename": file.filename,
-            "prediction": {**result, "class": "No identificada"},
-            "disease_info": UNRECOGNIZED_INFO,
-        }
-
-    # Filtro 2 (Validación y Enriquecimiento con LLM): Consultar a Gemini con la clase detectada
-    # y la imagen original. El LLM valida visualmente si corresponde a una hoja válida
-    # y genera los síntomas, causas y recomendaciones específicas.
+    # Validación visual y generación de información con el LLM (Gemini).
+    # El LLM valida si la imagen corresponde a una hoja de caña de azúcar ("hoja_valida" -> "recognized").
+    # Si hoja_valida es false, el LLM genera el campo "mensaje" explicando qué se ve y por qué no corresponde a caña.
+    # Si hoja_valida es true, genera síntomas, causas y recomendaciones.
     disease_info = get_disease_info(result["class"], image_bytes, content_type)
     if "recognized" not in disease_info:
         disease_info["recognized"] = True

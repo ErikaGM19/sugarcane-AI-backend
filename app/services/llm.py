@@ -59,16 +59,18 @@ sugerir un diagnóstico distinto, incluso si algún detalle de la imagen no es
 completamente claro.
 
 Antes de generar la información, evalúa si la imagen muestra efectivamente
-una hoja de una planta que podría presentar la condición indicada. Si la
+una hoja de caña de azúcar que podría presentar la condición indicada. Si la
 imagen claramente no corresponde a una hoja de este tipo —por ejemplo, si
 muestra una persona, un animal, un vehículo, un objeto, u otro tipo de
 planta evidentemente distinta—, indica esto mediante el campo "hoja_valida"
-con el valor false, y en ese caso completa "sintomas", "causas" y
-"recomendaciones" únicamente con un mensaje breve señalando que la imagen
-no parece corresponder a una hoja de caña de azúcar y sugiriendo cargar una
-fotografía adecuada, sin describir ninguna enfermedad. Si la imagen sí
-corresponde razonablemente a una hoja de planta, utiliza "hoja_valida":
-true y continúa con la respuesta normal.
+con el valor false. En ese caso, escribe en el campo "mensaje" un único
+texto breve y sencillo (máximo 3-4 líneas) que explique que la imagen no
+parece corresponder a una hoja de caña de azúcar —indicando, si es evidente,
+qué muestra realmente la imagen— y que sugiera cargar una fotografía
+adecuada, sin describir ninguna enfermedad; deja "sintomas", "causas" y
+"recomendaciones" como cadenas vacías. Si la imagen sí corresponde
+razonablemente a una hoja de caña de azúcar, utiliza "hoja_valida": true,
+deja "mensaje" como cadena vacía y continúa con la respuesta normal.
 
 Observa la imagen proporcionada y utiliza lo que se ve en ella —como la
 extensión del daño, la intensidad del color de las lesiones, o si el
@@ -100,8 +102,8 @@ Responde en español, en el siguiente formato JSON EXACTO (sin texto
 adicional antes ni después):
 
 {{
-
-"hoja_valida": true o false, según corresponda,
+  "hoja_valida": true o false, según corresponda,
+  "mensaje": "Solo cuando hoja_valida sea false: un texto breve y sencillo que explique qué se ve en la imagen y por qué no corresponde a una hoja de caña de azúcar y sugiera cargar otra fotografía. Si hoja_valida es true, déjalo como cadena vacía.",
   "sintomas": "Describe lo que se observa específicamente en esta imagen (extensión, color, apariencia de las lesiones) y cómo suele evolucionar este tipo de condición, en lenguaje simple (máximo 5-6 líneas).",
   "causas": "Por qué ocurre esta condición y qué factores la favorecen, explicado en lenguaje simple y claro (máximo 5-6 líneas).",
   "recomendaciones": "Qué puede hacer el agricultor para prevenir o manejar esta condición, con pasos prácticos acordes a la gravedad observada, explicados en lenguaje simple (máximo 6-7 líneas)."
@@ -143,6 +145,7 @@ def get_disease_info(disease_name: str, image_bytes: bytes, mime_type: str) -> d
         "recomendaciones": "Por favor consulta con un experto agrónomo o intenta nuevamente más tarde.",
         "generated": False,
         "recognized": True,
+        "mensaje": "",
    }
 
     try:
@@ -174,13 +177,22 @@ def get_disease_info(disease_name: str, image_bytes: bytes, mime_type: str) -> d
                 else:
                     hoja_valida = bool(hoja_valida)
 
+                mensaje = str(data.get("mensaje", "") or "").strip()
+                if not hoja_valida and not mensaje:
+                    mensaje = (
+                        "La imagen cargada no parece corresponder a una hoja de caña de azúcar. "
+                        "Por favor, carga una fotografía clara de una hoja de caña de azúcar."
+                    )
+
                 return {
                     "sintomas": data.get("sintomas", ""),
                     "causas": data.get("causas", ""),
                     "recomendaciones": data.get("recomendaciones", ""),
+                    "mensaje": mensaje,
                     "generated": True,
                     "recognized": hoja_valida,
                 }
+            
             except Exception as exc:
                 print(f"[WARN] {modelo}, intento {intento}: {exc}")
                 if _es_error_temporal(exc) and intento < REINTENTOS_POR_MODELO:
