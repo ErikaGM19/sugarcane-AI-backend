@@ -22,6 +22,11 @@ DISEASE_DISPLAY_NAMES = {
     "Tizon Bacteriano": "Tizón bacteriano",
 }
 
+# Interruptor del ensayo: True = se entrega al LLM la confianza (probabilidad) que
+# ResNet50 calcula para la imagen; False = el prompt queda sin ese dato
+# (sirve para repetir la línea base).
+USAR_CONFIANZA = True
+
 # Modelo principal y modelos alternativos por si alguno está saturado o sin cuota disponible.
 MODELOS = [
     "gemini-3.8-flash",
@@ -29,13 +34,10 @@ MODELOS = [
     "gemini-3.5-flash",
     "gemini-3.5-flash-lite",
 ]
+
 REINTENTOS_POR_MODELO = 1
 
-# Cliente de Gemini — se crea una sola vez y se reutiliza (patrón singleton,
-# igual que load_model() en model.py).
 _client = None
-
-
 def get_client():
     global _client
     if _client is None:
@@ -46,27 +48,59 @@ def get_client():
     return _client
 
 
-def build_prompt(disease_name: str) -> str:
+def build_prompt(disease_name: str, confianza=None) -> str:
+    # --- Bloque 1: lista explícita de los datos que recibe el LLM ---
+    datos = [
+        f'1. Condición detectada por el modelo de clasificación: "{disease_name}".',
+        "2. Imagen: la fotografía de la hoja de caña de azúcar se adjunta junto a este mensaje.",
+    ]
+    if confianza is not None:
+        datos.append(
+            f"3. Confianza del modelo de clasificación en esta fotografía: {confianza * 100:.1f} % "
+            "(es la probabilidad que el modelo calculó para la condición indicada al analizar "
+            "esta imagen; 100 % significaría total seguridad)."
+        )
+    bloque_datos = "\n".join(datos)
+
+    # --- Bloque 2: cómo usar cada dato (la confianza solo se explica si se entrega) ---
+    instrucciones_uso = (
+        "- La condición detectada es un hecho ya establecido: trabaja a partir de ella "
+        "sin cuestionarla ni sugerir un diagnóstico distinto, incluso si algún detalle "
+        "de la imagen no es completamente claro.\n"
+        "- La imagen te sirve para determinar la gravedad y el estado de avance del caso."
+    )
+    if confianza is not None:
+        instrucciones_uso += (
+            "\n- La confianza indica qué tan segura estuvo el modelo de clasificación con "
+            "esta fotografía en particular. Úsala solo para ponderar qué tan firme suena "
+            "tu respuesta: si es muy alta, puedes redactar con seguridad; si es intermedia "
+            "o baja, mantén la condición indicada, pero señala con claridad que conviene "
+            "confirmar el caso con un técnico o ingeniero agrónomo antes de tomar decisiones costosas."
+            "La confianza nunca determina la gravedad ni el estado de avance:"
+            "eso lo decides únicamente a partir de la fotografía. No menciones la confianza,"
+            "porcentajes ni cifras en tu respuesta; expresa la cautela con palabras sencillas."
+        )
+
     return f"""
 Eres un asistente agrícola que ayuda a pequeños y medianos agricultores de
 caña de azúcar, muchos de los cuales no tienen formación técnica ni acceso a
 un experto agrónomo.
 
-Un modelo de clasificación de imágenes detectó la siguiente condición en la
-hoja de caña de azúcar que se adjunta: "{disease_name}". Trabaja siempre a
-partir de esta condición como un hecho ya establecido, sin cuestionarla ni
-sugerir un diagnóstico distinto, incluso si algún detalle de la imagen no es
-completamente claro.
+DATOS QUE RECIBES PARA ESTE CASO:
+{bloque_datos}
+
+CÓMO USAR CADA DATO:
+{instrucciones_uso}
 
 Antes de generar la información, evalúa si la imagen muestra efectivamente
 una hoja de caña de azúcar que podría presentar la condición indicada. Si la
-imagen claramente no corresponde a una hoja de este tipo —por ejemplo, si
+imagen claramente no corresponde a una hoja de este tipo, por ejemplo, si
 muestra una persona, un animal, un vehículo, un objeto, u otro tipo de
-planta evidentemente distinta—, indica esto mediante el campo "hoja_valida"
+planta evidentemente distinta, indica esto mediante el campo "hoja_valida"
 con el valor false. En ese caso, escribe en el campo "mensaje" un único
 texto breve y sencillo (máximo 3-4 líneas) que explique que la imagen no
-parece corresponder a una hoja de caña de azúcar —indicando, si es evidente,
-qué muestra realmente la imagen— y que sugiera cargar una fotografía
+parece corresponder a una hoja de caña de azúcar, indicando, si es evidente,
+qué muestra realmente la imagen, y que sugiera cargar una fotografía
 adecuada, sin describir ninguna enfermedad; deja "sintomas", "causas" y
 "recomendaciones" como cadenas vacías. Si la imagen sí corresponde
 razonablemente a una hoja de caña de azúcar, utiliza "hoja_valida": true,
@@ -124,16 +158,17 @@ def _es_error_temporal(exc: Exception) -> bool:
     return "503" in texto or "UNAVAILABLE" in texto
 
 
-def get_disease_info(disease_name: str, image_bytes: bytes, mime_type: str) -> dict:
+def get_disease_info(disease_name: str, image_bytes: bytes, mime_type: str, confianza=None) -> dict:
     """
     Genera información complementaria (síntomas, causas, recomendaciones)
     para la enfermedad detectada, enviando a Gemini el nombre de la
-    enfermedad y la imagen original. El propio modelo determina, a partir
-    de la imagen, si esta corresponde efectivamente a una hoja de caña de
-    azúcar (campo "recognized").
+    enfermedad, la imagen original y la confianza (probabilidad) que ResNet50
+    calculó para esa imagen.
+    El propio modelo determina, a partir de la imagen, si esta corresponde
+    efectivamente a una hoja de caña de azúcar (campo "recognized").
 
-    Si el modelo principal está saturado (error 503), reintenta y luego
-    prueba con un modelo alternativo. Si todo falla, retorna un mensaje de
+    Cada modelo de la lista MODELOS se consulta una vez; ante cualquier error
+    (503, 404, 429, JSON inválido) se pasa al siguiente. Si todos fallan, retorna un mensaje de
     respaldo, asumiendo que la imagen sí es válida (recognized=True), ya
     que en ese caso no fue posible verificarlo con el LLM.
     """
@@ -146,11 +181,13 @@ def get_disease_info(disease_name: str, image_bytes: bytes, mime_type: str) -> d
         "generated": False,
         "recognized": True,
         "mensaje": "",
-   }
+    }
 
     try:
         client = get_client()
-        prompt = build_prompt(display_name)
+        confianza_enviada = confianza if USAR_CONFIANZA else None
+        print(f"[INFO] Confianza enviada al LLM para {disease_name}: {confianza_enviada}")
+        prompt = build_prompt(display_name, confianza_enviada)
         if image_bytes is not None:
             image_part = types.Part.from_bytes(data=image_bytes, mime_type=mime_type)
             contents = [prompt, image_part]
@@ -192,7 +229,7 @@ def get_disease_info(disease_name: str, image_bytes: bytes, mime_type: str) -> d
                     "generated": True,
                     "recognized": hoja_valida,
                 }
-            
+
             except Exception as exc:
                 print(f"[WARN] {modelo}, intento {intento}: {exc}")
                 if _es_error_temporal(exc) and intento < REINTENTOS_POR_MODELO:

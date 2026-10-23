@@ -147,23 +147,37 @@ def test_classify_response_time(mock_get_disease_info, mock_predict, client):
 
 
 # ===========================================================================
-# CP-IA04 – Robustez ante imágenes fuera del dominio (Baja confianza < 0.90)
+# CP-IA03 – Comportamiento ante imágenes fuera del dominio
 # ===========================================================================
 
 @patch("app.routes.classify.predict")
 @patch("app.routes.classify.get_disease_info")
-def test_classify_out_of_domain_image_low_confidence(mock_get_disease_info, mock_predict, client):
+def test_classify_out_of_domain_image(mock_get_disease_info, mock_predict, client):
+    """
+    CP-IA03: Clasificación de imágenes que no corresponden a hojas de caña de azúcar
+    (por ejemplo, una casa o un objeto fuera de dominio).
+    El sistema debe reconocer que la imagen no corresponde a una hoja e indicar 'No identificada'.
+    """
     # Arrange
     app.dependency_overrides[get_current_user] = lambda: MagicMock(email="user@test.com")
 
-    # Simulamos una imagen fuera de dominio que genera predicción dispersa/baja confianza
+    # Simulamos una imagen fuera de dominio (ej. una casa o un zapato)
     mock_predict.return_value = {
         "class": "Hoja Amarilla",
-        "confidence": 0.45,  # Menor que CONFIDENCE_THRESHOLD (0.90)
+        "confidence": 0.45,
         "all_probabilities": {"Hoja Amarilla": 0.45, "Carbon": 0.25},
     }
+    # El LLM valida visualmente que la imagen no corresponde a una hoja de caña (hoja_valida: false)
+    mock_get_disease_info.return_value = {
+        "sintomas": "",
+        "causas": "",
+        "recomendaciones": "",
+        "mensaje": "La imagen muestra una casa y no corresponde a una hoja de caña de azúcar.",
+        "generated": True,
+        "recognized": False,
+    }
 
-    files = {"file": ("zapato.jpg", create_test_image(), "image/jpeg")}
+    files = {"file": ("casa.jpg", create_test_image(), "image/jpeg")}
 
     # Act
     response = client.post("/classify", files=files)
@@ -174,10 +188,10 @@ def test_classify_out_of_domain_image_low_confidence(mock_get_disease_info, mock
     assert data["prediction"]["class"] == "No identificada"
     assert data["prediction"]["confidence"] == 0.45
     assert data["disease_info"]["recognized"] is False
-    assert data["disease_info"]["generated"] is False
-    assert "No fue posible asociar la imagen" in data["disease_info"]["sintomas"]
-    # Verifica que NO se llamó al LLM innecesariamente cuando la confianza es insuficiente
-    mock_get_disease_info.assert_not_called()
+    assert data["disease_info"]["generated"] is True
+    assert "no corresponde a una hoja de caña de azúcar" in data["disease_info"]["mensaje"]
+    mock_predict.assert_called_once()
+    mock_get_disease_info.assert_called_once()
 
     app.dependency_overrides.clear()
 

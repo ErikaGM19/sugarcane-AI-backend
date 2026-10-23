@@ -129,7 +129,7 @@ async def classify_image(file: UploadFile = File(...), current_user = Depends(ge
     # El LLM valida si la imagen corresponde a una hoja de caña de azúcar ("hoja_valida" -> "recognized").
     # Si hoja_valida es false, el LLM genera el campo "mensaje" explicando qué se ve y por qué no corresponde a caña.
     # Si hoja_valida es true, genera síntomas, causas y recomendaciones.
-    disease_info = get_disease_info(result["class"], image_bytes, content_type)
+    disease_info = get_disease_info(result["class"], image_bytes, content_type, result["confidence"])
     if "recognized" not in disease_info:
         disease_info["recognized"] = True
 
