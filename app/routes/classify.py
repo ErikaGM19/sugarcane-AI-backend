@@ -44,21 +44,6 @@ ALLOWED_EXTENSIONS = {
 }
 MAX_SIZE_MB = 30
 
-# Umbral mínimo de confianza para aceptar una predicción como válida.
-# Por debajo de esto, se asume que la imagen probablemente no es una
-# hoja de caña de azúcar (u otra condición no vista en entrenamiento).
-CONFIDENCE_THRESHOLD = 0.90
-
-# Información de respaldo cuando la confianza es demasiado baja.
-# No se consulta a Gemini en este caso para ahorrar cuota y latencia.
-UNRECOGNIZED_INFO = {
-    "sintomas": "No fue posible asociar la imagen con ninguna de las enfermedades conocidas con suficiente certeza.",
-    "causas": "Esto puede deberse a que la imagen no corresponde a una hoja de caña de azúcar, o a que la fotografía tiene mala iluminación, enfoque o encuadre.",
-    "recomendaciones": "Verifica que la imagen sea de una hoja de caña de azúcar, tomada con buena luz y ocupando la mayor parte del encuadre. Si el problema persiste, consulta con un experto agrónomo.",
-    "generated": False,
-    "recognized": False,
-}
-
 def _normalize_to_jpeg(raw_bytes: bytes) -> tuple[bytes, str]:
     """
     Convierte cualquier imagen soportada por Pillow a JPEG RGB.
@@ -129,7 +114,16 @@ async def classify_image(file: UploadFile = File(...), current_user = Depends(ge
     # El LLM valida si la imagen corresponde a una hoja de caña de azúcar ("hoja_valida" -> "recognized").
     # Si hoja_valida es false, el LLM genera el campo "mensaje" explicando qué se ve y por qué no corresponde a caña.
     # Si hoja_valida es true, genera síntomas, causas y recomendaciones.
-    disease_info = get_disease_info(result["class"], image_bytes, content_type, result["confidence"])
+    # >>> CAMBIO (inicio): segunda clase más probable (distinta de la predicha), para el módulo LLM
+    otras = sorted(
+        ((clase, prob) for clase, prob in result["all_probabilities"].items() if clase != result["class"]),
+        key=lambda par: par[1],
+        reverse=True,
+    )
+    segunda = otras[0] if otras else None
+    # >>> CAMBIO (fin)
+
+    disease_info = get_disease_info(result["class"], image_bytes, content_type, result["confidence"], segunda)  # >>> CAMBIO: se agrega 'segunda'
     if "recognized" not in disease_info:
         disease_info["recognized"] = True
 

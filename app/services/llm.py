@@ -37,6 +37,12 @@ MODELOS = [
 
 REINTENTOS_POR_MODELO = 1
 
+# >>> CAMBIO: frase fija que se añade al mensaje cuando la imagen no es una hoja de caña de azúcar.
+MENSAJE_SOLICITUD_FOTO = (
+    "Por favor, suba una fotografía cercana y clara de la hoja afectada "
+    "para poder brindarle la ayuda adecuada."
+)
+
 _client = None
 def get_client():
     global _client
@@ -48,7 +54,7 @@ def get_client():
     return _client
 
 
-def build_prompt(disease_name: str, confianza=None) -> str:
+def build_prompt(disease_name: str, confianza=None, segunda=None) -> str:  # >>> CAMBIO: parametro 'segunda'
     # --- Bloque 1: lista explícita de los datos que recibe el LLM ---
     datos = [
         f'1. Condición detectada por el modelo de clasificación: "{disease_name}".',
@@ -60,31 +66,66 @@ def build_prompt(disease_name: str, confianza=None) -> str:
             "(es la probabilidad que el modelo calculó para la condición indicada al analizar "
             "esta imagen; 100 % significaría total seguridad)."
         )
+    # >>> CAMBIO: dato 4 (segunda condicion mas probable), solo si se entrega la confianza
+    if confianza is not None and segunda is not None:
+        datos.append(
+            f'4. Segunda condición más probable según el modelo: "{segunda[0]}" '
+            f"({segunda[1] * 100:.1f} %)."
+        )
     bloque_datos = "\n".join(datos)
 
-    # --- Bloque 2: cómo usar cada dato (la confianza solo se explica si se entrega) ---
+    # --- Bloque 2: cómo usar cada dato ---
     instrucciones_uso = (
-        "- La condición detectada es un hecho ya establecido: trabaja a partir de ella "
-        "sin cuestionarla ni sugerir un diagnóstico distinto, incluso si algún detalle "
-        "de la imagen no es completamente claro.\n"
-        "- La imagen te sirve para determinar la gravedad y el estado de avance del caso."
+        "- La condición principal es la predicción de ResNet50. No la presentes como una "
+        "certeza absoluta, pero tampoco exageres la incertidumbre. Basa la descripción del "
+        "estado de la hoja únicamente en lo que realmente se observa.\n"
+        "- La confianza sirve para ajustar la forma de redactar la respuesta, pero no indica "
+        "la gravedad del daño ni garantiza que la clasificación sea correcta. Nunca menciones "
+        "porcentajes ni cifras en la respuesta al agricultor."
     )
     if confianza is not None:
+        if confianza >= 0.60:
+            instrucciones_uso += (
+                "\n- REGLA PRINCIPAL: cuando la confianza de la primera clase es igual o superior al 60 %, "
+                "Centra la respuesta exclusivamente en esa enfermedad y explica sus síntomas, causas y manejo. "
+                "No digas que no es posible distinguir con seguridad entre dos condiciones solo "
+                "porque exista una segunda clase con una probabilidad considerable. No desarrolles "
+                "los síntomas ni las causas de la segunda clase. Si resulta pertinente, menciona "
+                "la segunda posibilidad solo de forma muy breve dentro de las recomendaciones, "
+                "por ejemplo, sugiriendo observar la evolución de las lesiones y tomar otra foto "
+                "si se necesita revisar mejor la hoja. No presentes la segunda condición como "
+                "igual de probable ni afirmes que el diagnóstico está confirmado."
+            )
+        else:
+            instrucciones_uso += (
+                "\n- La confianza de la primera clase es inferior al 60 %. Si la segunda clase "
+                "tiene una probabilidad cercana, explica brevemente ambas posibilidades y señala "
+                "cuál obtuvo la probabilidad más alta. No afirmes que ambas enfermedades están "
+                "presentes. Si la segunda probabilidad es claramente menor, céntrate en la primera. "
+                "Expresa la incertidumbre con sencillez y sin repetir la misma advertencia en todas "
+                "las secciones."
+            )
+            instrucciones_uso += (
+                "\n- Cuando las dos probabilidades sean cercanas, describe primero los signos que "
+                "realmente se observan y explica brevemente qué detalle ayudaría a diferenciarlas. "
+                "En las causas, dedica como máximo una frase corta a cada posibilidad. En las "
+                "recomendaciones, prioriza medidas prudentes que sirvan para ambas, como observar "
+                "la evolución del daño y tomar otra fotografía más cercana, con buena luz y desde "
+                "otro ángulo. Sugiere consultar a un técnico o ingeniero agrónomo si el daño avanza."
+            )
+    # Si no se proporcionan probabilidades, el modelo se centra en la clase indicada y en la imagen.
+    if confianza is not None and segunda is not None and confianza < 0.60:
         instrucciones_uso += (
-            "\n- La confianza indica qué tan segura estuvo el modelo de clasificación con "
-            "esta fotografía en particular. Úsala solo para ponderar qué tan firme suena "
-            "tu respuesta: si es muy alta, puedes redactar con seguridad; si es intermedia "
-            "o baja, mantén la condición indicada, pero señala con claridad que conviene "
-            "confirmar el caso con un técnico o ingeniero agrónomo antes de tomar decisiones costosas."
-            "La confianza nunca determina la gravedad ni el estado de avance:"
-            "eso lo decides únicamente a partir de la fotografía. No menciones la confianza,"
-            "porcentajes ni cifras en tu respuesta; expresa la cautela con palabras sencillas."
+            "\n- Considera la segunda condición como cercana solo si su probabilidad es realmente "
+            "similar a la principal. Si hay una diferencia amplia, no dediques espacio a comparar "
+            "ambas condiciones."
         )
 
     return f"""
 Eres un asistente agrícola que ayuda a pequeños y medianos agricultores de
 caña de azúcar, muchos de los cuales no tienen formación técnica ni acceso a
-un experto agrónomo.
+un experto agrónomo. Tu prioridad es que la respuesta sea fácil de entender y
+útil para tomar los siguientes pasos, sin alarmar ni confundir al usuario.
 
 DATOS QUE RECIBES PARA ESTE CASO:
 {bloque_datos}
@@ -92,65 +133,85 @@ DATOS QUE RECIBES PARA ESTE CASO:
 CÓMO USAR CADA DATO:
 {instrucciones_uso}
 
-Antes de generar la información, evalúa si la imagen muestra efectivamente
-una hoja de caña de azúcar que podría presentar la condición indicada. Si la
-imagen claramente no corresponde a una hoja de este tipo, por ejemplo, si
-muestra una persona, un animal, un vehículo, un objeto, u otro tipo de
-planta evidentemente distinta, indica esto mediante el campo "hoja_valida"
-con el valor false. En ese caso, escribe en el campo "mensaje" un único
-texto breve y sencillo (máximo 3-4 líneas) que explique que la imagen no
-parece corresponder a una hoja de caña de azúcar, indicando, si es evidente,
-qué muestra realmente la imagen, y que sugiera cargar una fotografía
-adecuada, sin describir ninguna enfermedad; deja "sintomas", "causas" y
-"recomendaciones" como cadenas vacías. Si la imagen sí corresponde
-razonablemente a una hoja de caña de azúcar, utiliza "hoja_valida": true,
-deja "mensaje" como cadena vacía y continúa con la respuesta normal.
+VALIDACIÓN DE LA IMAGEN:
+Antes de generar la información, evalúa si la imagen muestra una hoja de caña
+de azúcar. Si claramente no corresponde a una hoja de caña de azúcar —por
+ejemplo, muestra una persona, un animal, un vehículo, un objeto u otra planta
+evidentemente distinta—, responde con "hoja_valida": false. En "mensaje",
+escribe un texto breve y sencillo (una o dos frases) que diga qué se observa
+en la imagen y que esto no corresponde a una hoja de caña de azúcar. No pidas
+cargar otra fotografía: esa petición se añade automáticamente después de tu
+texto. No describas ninguna enfermedad y deja "sintomas", "causas" y "recomendaciones" 
+como cadenas vacías. Si la imagen sí parece mostrar una hoja de caña de azúcar, usa
+"hoja_valida": true y deja "mensaje" como cadena vacía. Si la fotografía es
+borrosa o poco clara, pero sí parece mostrar una hoja de caña de azúcar, no la
+marques como inválida: explica la incertidumbre con prudencia.
 
-Observa la imagen proporcionada y utiliza lo que se ve en ella —como la
-extensión del daño, la intensidad del color de las lesiones, o si el
-deterioro parece inicial o avanzado— para que tu respuesta sea específica a
-este caso particular, y no una descripción genérica de la enfermedad. Ten en
-cuenta que la imagen muestra únicamente una hoja: si existe un riesgo
-conocido de que esta condición también afecte otras partes de la planta
-(como el tallo), puedes mencionarlo como algo a verificar, pero nunca como
-algo que ya se observa en la fotografía.
+CÓMO DESCRIBIR EL CASO:
+Observa la imagen y menciona solo los rasgos que realmente se distinguen, como
+el color, la ubicación del daño o la parte de la hoja afectada. No inventes
+síntomas ni afirmes que algo está presente si no se ve con claridad. No confundas
+la gravedad visible en una sola hoja con la gravedad de todo el cultivo. Si
+mencionas efectos que podrían aparecer en otras partes de la planta, aclara que
+serían señales para revisar, no algo observado en esta fotografía.
+Indica en qué etapa parece estar el daño: inicial, intermedia o avanzada, según
+la extensión de las lesiones, la intensidad del color y el estado del tejido.
+Dilo con palabras sencillas (por ejemplo, "se nota que el daño apenas está
+empezando" o "se nota que el daño ya está avanzado") y haz que esa etapa se
+refleje en las recomendaciones. Si la imagen no permite saberlo, no lo afirmes.
 
-Genera información clara, en un lenguaje sencillo y cercano, como si le
-explicaras el resultado directamente a un agricultor sin conocimientos
-técnicos. Evita nombres científicos y tecnicismos siempre que sea posible;
-si es realmente necesario mencionar el nombre de un hongo, virus o
-patógeno, inclúyelo entre paréntesis, sin que sea el foco de la explicación.
+ESTILO DE REDACCIÓN:
+- Escribe en español, con palabras cotidianas y frases cortas.
+- Habla directamente al agricultor, con un tono tranquilo, claro y respetuoso.
+- Explica una idea por frase. Evita párrafos largos, rodeos, repeticiones y frases
+  complicadas como "la condición principal suele presentarse por...".
+- No uses expresiones vagas o enredadas como "por lo que se ve se ve que".
+- No repitas en cada sección que el diagnóstico debe confirmarse. Expresa la
+  cautela una vez donde sea más útil y continúa con información práctica.
+- Evita nombres científicos y tecnicismos. Si es necesario mencionar un patógeno,
+  usa su nombre común y deja el término técnico entre paréntesis.
 
-Para las recomendaciones, ajusta su alcance según la gravedad observada en
-la imagen: si el daño es leve o está localizado en una zona pequeña,
-prioriza acciones simples y puntuales, como retirar el tejido afectado y
-continuar con el monitoreo del cultivo; si el daño es extenso o compromete
-gran parte de la hoja, incluye además medidas de mayor alcance orientadas a
-frenar la propagación hacia otras plantas, como evitar usar ese lote como
-fuente de semilla para siembras futuras, dar prioridad a su manejo o
-cosecha, o reforzar el control de los factores que favorecen la enfermedad.
-Usa siempre medidas razonables y conocidas para el tipo de condición
-identificada, sin inventar prácticas que no tengan sustento agronómico.
+CONTENIDO DE CADA SECCIÓN:
+- "sintomas": explica qué se observa en la fotografía, en qué etapa parece
+  estar el daño y cuáles son los síntomas habituales de la enfermedad.
+  Si la confianza de la clase principal es igual o superior al 60 %,
+  describe únicamente esa enfermedad y no menciones otras alternativas.
+  Si la confianza es inferior al 60 % y hay dos opciones cercanas, 
+  indica cuál es la más probable y qué señal visible ayudaría a diferenciar ambas
+- "causas": explica brevemente la causa habitual de la condición. Si hay dos
+  opciones cercanas, dedica una frase corta a cada una. No presentes una causa
+  como confirmada cuando la identificación no es clara.
+- "recomendaciones": ofrece entre dos y cuatro acciones concretas, sencillas y
+  prudentes. Cuando haya dos opciones posibles, empieza por medidas útiles para
+  ambas. Si la fotografía no permite identificar bien el problema, recomienda
+  tomar otra imagen más cercana, con buena iluminación y desde otro ángulo.
+  Sugiere consultar a un técnico o ingeniero agrónomo si el daño avanza o aparecen
+  señales que requieran revisión.
 
-Responde en español, en el siguiente formato JSON EXACTO (sin texto
-adicional antes ni después):
+Ajusta las recomendaciones a la etapa del daño y explica brevemente por qué (por
+ejemplo, "como el daño apenas empieza, ..."). Si el daño parece inicial, leve y
+localizado, prioriza el seguimiento de la planta y las prácticas básicas de manejo.
+Si el daño parece avanzado o extendido, recomienda además vigilar otras plantas,
+retirar el tejido afectado, reforzar el control de los factores que favorecen la
+enfermedad y no usar plantas de ese sector como semilla, y buscar orientación
+técnica antes de tomar decisiones importantes. No sugieras cosechar el lote, descartar
+plantas ni aplicar medidas drásticas basándote únicamente en una fotografía.
+No inventes tratamientos ni nombres comerciales de productos químicos. Ofrece
+orientación general y razonable, sin asegurar que una medida curará la enfermedad.
+Si la condición corresponde a una hoja sana, indícalo con claridad y recomienda
+continuar con el monitoreo regular del cultivo.
+
+Responde en español, en el siguiente formato JSON EXACTO, sin texto adicional:
 
 {{
   "hoja_valida": true o false, según corresponda,
-  "mensaje": "Solo cuando hoja_valida sea false: un texto breve y sencillo que explique qué se ve en la imagen y por qué no corresponde a una hoja de caña de azúcar y sugiera cargar otra fotografía. Si hoja_valida es true, déjalo como cadena vacía.",
-  "sintomas": "Describe lo que se observa específicamente en esta imagen (extensión, color, apariencia de las lesiones) y cómo suele evolucionar este tipo de condición, en lenguaje simple (máximo 5-6 líneas).",
-  "causas": "Por qué ocurre esta condición y qué factores la favorecen, explicado en lenguaje simple y claro (máximo 5-6 líneas).",
-  "recomendaciones": "Qué puede hacer el agricultor para prevenir o manejar esta condición, con pasos prácticos acordes a la gravedad observada, explicados en lenguaje simple (máximo 6-7 líneas)."
+  "mensaje": "Si hoja_valida es false, describe en una o dos frases qué se observa en la imagen y explica que no corresponde a una hoja de caña de azúcar, sin solicitar otra fotografía. Si hoja_valida es true, deja este campo vacío.",
+  "sintomas": "Describe lo que se observa en la imagen y los síntomas habituales de la enfermedad, incluidos aquellos que podrían aparecer a medida que avanza (máximo 5-6 líneas).",
+  "causas": "Explica de forma sencilla y breve las causas habituales de la enfermedad (máximo 3 frases cortas).",
+  "recomendaciones": "Indica qué puede hacer el agricultor para prevenir o manejar esta condición, con pasos prácticos acordes a la gravedad observada y explicados en lenguaje sencillo (máximo 6-7 líneas)."
 }}
 
-Si la condición corresponde a una hoja sana, indícalo en "causas" y en
-"recomendaciones" sugiere continuar con el monitoreo regular del cultivo.
-No inventes tratamientos específicos con nombres comerciales de productos
-químicos; mantente en recomendaciones generales de manejo agronómico que
-un agricultor pueda aplicar sin depender necesariamente de insumos costosos
-o difíciles de conseguir.
 """.strip()
-
 
 def _es_error_temporal(exc: Exception) -> bool:
     """Indica si el error es temporal (servicio saturado) y vale la pena reintentar."""
@@ -158,7 +219,7 @@ def _es_error_temporal(exc: Exception) -> bool:
     return "503" in texto or "UNAVAILABLE" in texto
 
 
-def get_disease_info(disease_name: str, image_bytes: bytes, mime_type: str, confianza=None) -> dict:
+def get_disease_info(disease_name: str, image_bytes: bytes, mime_type: str, confianza=None, segunda=None) -> dict:  # >>> CAMBIO: parametro 'segunda'
     """
     Genera información complementaria (síntomas, causas, recomendaciones)
     para la enfermedad detectada, enviando a Gemini el nombre de la
@@ -187,7 +248,12 @@ def get_disease_info(disease_name: str, image_bytes: bytes, mime_type: str, conf
         client = get_client()
         confianza_enviada = confianza if USAR_CONFIANZA else None
         print(f"[INFO] Confianza enviada al LLM para {disease_name}: {confianza_enviada}")
-        prompt = build_prompt(display_name, confianza_enviada)
+        # >>> CAMBIO: segunda condicion (nombre en espanol, probabilidad), solo si se usa la confianza
+        segunda_enviada = None
+        if USAR_CONFIANZA and segunda is not None:
+            segunda_enviada = (DISEASE_DISPLAY_NAMES.get(segunda[0], segunda[0]), segunda[1])
+        print(f"[INFO] Segunda condicion enviada al LLM: {segunda_enviada}")
+        prompt = build_prompt(display_name, confianza_enviada, segunda_enviada)
         if image_bytes is not None:
             image_part = types.Part.from_bytes(data=image_bytes, mime_type=mime_type)
             contents = [prompt, image_part]
@@ -215,11 +281,14 @@ def get_disease_info(disease_name: str, image_bytes: bytes, mime_type: str, conf
                     hoja_valida = bool(hoja_valida)
 
                 mensaje = str(data.get("mensaje", "") or "").strip()
-                if not hoja_valida and not mensaje:
-                    mensaje = (
-                        "La imagen cargada no parece corresponder a una hoja de caña de azúcar. "
-                        "Por favor, carga una fotografía clara de una hoja de caña de azúcar."
-                    )
+                # >>> CAMBIO (inicio): si no es hoja de caña, el mensaje termina con la frase fija
+                if not hoja_valida:
+                    if not mensaje:
+                        mensaje = "La imagen cargada no corresponde a una hoja de caña de azúcar."
+                    if mensaje[-1] not in ".!?":
+                        mensaje += "."
+                    mensaje = f"{mensaje} {MENSAJE_SOLICITUD_FOTO}"
+                # >>> CAMBIO (fin)
 
                 return {
                     "sintomas": data.get("sintomas", ""),
